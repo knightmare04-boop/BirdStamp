@@ -26,6 +26,16 @@ MB_OK = 0x0
 MIN_NET_RELEASE = 461808  # .NET Framework 4.7.2
 
 
+def _report_startup_failure():
+    """If this version was just installed by an update, trigger a rollback."""
+    try:
+        import updater
+
+        updater.report_startup_failure()
+    except Exception:
+        logger.exception("Could not report startup failure to the updater")
+
+
 def _show_error(title, message):
     try:
         ctypes.windll.user32.MessageBoxW(None, message, title, MB_ICONERROR | MB_OK)
@@ -157,10 +167,51 @@ class Api:
 
 
 def _on_gui_started():
+    import updater
+
     logger.info("BirdStamp GUI started")
+    updater.mark_healthy()
+    updater.start_background_updater()
+
+
+_restarting_for_update = False
+
+
+def _make_restart_handler(window):
+    import updater
+
+    def _restart_for_update():
+        global _restarting_for_update
+        if not updater.launch_apply():
+            return False
+        _restarting_for_update = True
+
+        def _close_window():
+            # Give the HTTP response a moment to reach the page first.
+            time.sleep(0.5)
+            try:
+                window.destroy()
+            except Exception:
+                logger.exception("Could not close the window for the update; exiting")
+                os._exit(0)
+
+        threading.Thread(target=_close_window, daemon=True).start()
+        return True
+
+    return _restart_for_update
 
 
 def main():
+    import updater
+    from version import __version__
+
+    logger.info("BirdStamp %s starting", __version__)
+
+    # An update downloaded in an earlier session (user chose "Later") is
+    # installed now, before anything else starts.
+    if updater.staged_update_version() and updater.launch_apply():
+        return
+
     if not _check_dotnet_framework():
         sys.exit(1)
 
@@ -178,6 +229,7 @@ def main():
 
     if not _wait_for_server(port):
         logger.error("Backend server did not become ready in time")
+        _report_startup_failure()
         _show_error(
             "BirdStamp Tracker - Startup Failed",
             "BirdStamp Tracker's background server did not start in time.\n\n"
@@ -197,6 +249,7 @@ def main():
         js_api=api,
     )
     api._window = window
+    updater.set_restart_handler(_make_restart_handler(window))
 
     storage_path = os.path.join(get_app_data_dir(), "webview")
 
@@ -208,6 +261,7 @@ def main():
         )
     except Exception:
         logger.error("BirdStamp GUI failed\n%s", traceback.format_exc())
+        _report_startup_failure()
         _show_error(
             "BirdStamp Tracker - Startup Failed",
             "The application window component could not start.\n\n"
@@ -226,14 +280,34 @@ def main():
         )
         sys.exit(1)
 
+    if _restarting_for_update:
+        # Exit straight away so the updater can replace our files.
+        logger.info("Exiting to install update")
+        logging.shutdown()
+        os._exit(0)
+
 
 if __name__ == "__main__":
+    if "--apply-update" in sys.argv:
+        # Running from _update\new as the updater: swap in the new files and
+        # relaunch. Never starts the server or the window.
+        import updater
+
+        try:
+            code = updater.run_apply(sys.argv[1:])
+        except Exception:
+            logger.exception("Updater crashed")
+            code = 1
+        logging.shutdown()
+        sys.exit(code)
+
     try:
         main()
     except SystemExit:
         raise
     except Exception:
         logger.error("Unhandled exception in desktop.py\n%s", traceback.format_exc())
+        _report_startup_failure()
         _show_error(
             "BirdStamp Tracker - Startup Failed",
             "BirdStamp Tracker failed to start due to an unexpected error.\n\n"

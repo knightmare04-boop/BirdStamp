@@ -19,6 +19,7 @@ from database import engine, get_db, ensure_db_schema, get_uploads_dir, SessionL
 import scraper
 import sync
 import philatelic_data
+import updater
 from apscheduler.schedulers.background import BackgroundScheduler
 from contextlib import asynccontextmanager
 
@@ -350,6 +351,21 @@ def get_status():
         "scrape": scraper.scrape_state,
         "sync": sync.sync_state
     }
+
+@app.get("/api/update")
+def get_update_status():
+    return updater.get_state()
+
+@app.post("/api/update/apply")
+def apply_update():
+    if updater.get_state()["status"] != "ready":
+        raise HTTPException(status_code=409, detail="No update is ready to install.")
+    if not updater.request_restart():
+        raise HTTPException(
+            status_code=500,
+            detail="The update could not be installed. You can keep using this version.",
+        )
+    return {"message": "Restarting to install the update"}
 
 @app.post("/api/export")
 @app.post("/api/backup")

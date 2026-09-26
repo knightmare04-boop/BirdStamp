@@ -55,6 +55,22 @@ This builds standalone executables in `Distributions/BirdStamp_Fresh` and `Distr
 
 Each build ships a `BirdStamp.exe.config` (`loadFromRemoteSources`) and a runtime hook (`backend/rthook_unblock.py`) so the app still starts when Windows marks the extracted files as downloaded from the internet. Runtime logs: `%LOCALAPPDATA%\BirdStamp\logs\birdstamp.log`.
 
+It also produces `Distributions/BirdStamp_Update-<version>.zip` (+ `.sha256`), the app-only package used by auto-update.
+
+### Publishing an Update (auto-update)
+Installed copies of the app check this repo's latest GitHub Release in the background. When a newer version is found, it is downloaded and verified, and the app shows a **Restart to update** banner (or installs it on the next launch). Only program files are replaced; `bird_stamps.db`, `uploads/` and `my collection sheets/` are never touched. If the new version fails to start, the app rolls back to the previous one automatically.
+
+To ship an update:
+1. Bump `__version__` in `backend/version.py` (e.g. `2.1.0` → `2.2.0`).
+2. Commit and push your changes.
+3. Run:
+   ```powershell
+   .\backend\venv\Scripts\python.exe build.py --release --notes "What changed in this version"
+   ```
+   This builds everything and publishes release `v<version>` on GitHub with the update package and both full zips. It refuses to publish if there are uncommitted or unpushed changes, or if the version isn't newer than the latest release.
+
+Updates are off when running from source, and when the app folder is read-only (e.g. installed under Program Files).
+
 ---
 
 ## Features

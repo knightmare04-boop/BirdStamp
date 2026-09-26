@@ -269,6 +269,22 @@ def run_all_tests():
         except Exception as e:
             tracker.add_result("API", "GET /api/status", "FAIL", str(e))
 
+        # Test auto-update endpoints (updates are disabled when running from source)
+        try:
+            res = requests.get(f"{base_url}/api/update")
+            data = res.json() if res.status_code == 200 else {}
+            if res.status_code == 200 and data.get("current_version") and data.get("status") == "disabled":
+                tracker.add_result("API", "GET /api/update", "PASS", f"v{data['current_version']}, status '{data['status']}' (expected from source)")
+            else:
+                tracker.add_result("API", "GET /api/update", "FAIL", f"Status {res.status_code}: {data}")
+            res = requests.post(f"{base_url}/api/update/apply")
+            if res.status_code == 409:
+                tracker.add_result("API", "POST /api/update/apply (nothing staged -> 409)", "PASS", res.json().get("detail", ""))
+            else:
+                tracker.add_result("API", "POST /api/update/apply (nothing staged -> 409)", "FAIL", f"Status {res.status_code}")
+        except Exception as e:
+            tracker.add_result("API", "Auto-update endpoints", "FAIL", str(e))
+
 
         # ---------------------------------------------------------
         # SUITE 3: CRUD Mutation Endpoints

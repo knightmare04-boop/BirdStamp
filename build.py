@@ -1,4 +1,7 @@
+import argparse
+import hashlib
 import os
+import re
 import subprocess
 import shutil
 import sqlite3
@@ -6,10 +9,93 @@ import stat
 import sys
 import zipfile
 
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+VERSION_FILE = os.path.join(ROOT_DIR, "backend", "version.py")
+
 
 def run_command(cmd, cwd=None):
     print(f"Running: {cmd}")
     subprocess.run(cmd, shell=True, check=True, cwd=cwd)
+
+
+def _capture(args, cwd=ROOT_DIR):
+    """Run a command (list form) and return (returncode, stripped stdout)."""
+    result = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+    return result.returncode, result.stdout.strip()
+
+
+def read_version_info():
+    with open(VERSION_FILE, "r", encoding="utf-8") as f:
+        text = f.read()
+    version = re.search(r'__version__\s*=\s*"([^"]+)"', text).group(1)
+    repo = re.search(r'GITHUB_REPO\s*=\s*"([^"]+)"', text).group(1)
+    return version, repo
+
+
+def _version_tuple(text):
+    return tuple(int(p) for p in re.findall(r"\d+", text or "")[:3])
+
+
+def release_preflight(version, repo):
+    """Refuse to publish unless the release would be reproducible and newer."""
+    problems = []
+    if shutil.which("gh") is None:
+        problems.append("GitHub CLI (gh) is not installed.")
+    elif _capture(["gh", "auth", "status"])[0] != 0:
+        problems.append("GitHub CLI is not logged in (run: gh auth login).")
+
+    code, status = _capture(["git", "status", "--porcelain"])
+    if code != 0:
+        problems.append("This folder is not a git repository.")
+    elif status:
+        problems.append("There are uncommitted changes. Commit them first so the release matches the code.")
+
+    _capture(["git", "fetch", "--quiet"])
+    _, head = _capture(["git", "rev-parse", "HEAD"])
+    code, upstream = _capture(["git", "rev-parse", "@{u}"])
+    if code != 0 or head != upstream:
+        problems.append("Local commits are not pushed to GitHub. Run: git push")
+
+    if shutil.which("gh") is not None:
+        if _capture(["gh", "release", "view", f"v{version}", "--repo", repo])[0] == 0:
+            problems.append(f"Release v{version} already exists. Bump __version__ in backend/version.py.")
+        code, latest = _capture(
+            ["gh", "release", "view", "--repo", repo, "--json", "tagName", "--jq", ".tagName"]
+        )
+        if code == 0 and latest and _version_tuple(latest) >= _version_tuple(version):
+            problems.append(
+                f"Version {version} is not newer than the latest release ({latest}). "
+                "Bump __version__ in backend/version.py."
+            )
+
+    if problems:
+        print("\nCannot publish a release:")
+        for p in problems:
+            print(f"  - {p}")
+        sys.exit(1)
+    return head
+
+
+def _sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _zip_dir(source_dir, zip_path, arc_root):
+    """Zip source_dir; entries are stored under arc_root ('' for zip root)."""
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for root, dirs, files in os.walk(source_dir):
+            if not dirs and not files and root != source_dir:
+                # Keep empty folders (e.g. 'my collection sheets').
+                rel_dir = os.path.relpath(root, source_dir)
+                zf.write(root, (os.path.join(arc_root, rel_dir) if arc_root else rel_dir) + "/")
+            for file in files:
+                file_path = os.path.join(root, file)
+                rel_path = os.path.relpath(file_path, source_dir)
+                zf.write(file_path, os.path.join(arc_root, rel_path) if arc_root else rel_path)
 
 
 def force_delete(path):
@@ -62,11 +148,15 @@ def _checkpoint_db(db_path):
         return False
 
 
-def build():
-    root_dir = os.path.dirname(os.path.abspath(__file__))
+def build(release=False, notes=None, notes_file=None):
+    root_dir = ROOT_DIR
     frontend_dir = os.path.join(root_dir, "frontend")
     backend_dir = os.path.join(root_dir, "backend")
     dist_dir = os.path.join(root_dir, "Distributions")
+
+    version, repo = read_version_info()
+    print(f"=== BirdStamp {version} ===")
+    release_commit = release_preflight(version, repo) if release else None
 
     print("--- 1. Building React Frontend ---")
     run_command("npm install", cwd=frontend_dir)
@@ -103,6 +193,8 @@ def build():
         "--name", "BirdStamp",
         "--runtime-hook", runtime_hook,
         "--hidden-import", "app_log",
+        "--hidden-import", "updater",
+        "--hidden-import", "version",
     ] + add_data_args + ["desktop.py"]
 
     cmd_str = " ".join(f'"{c}"' if " " in c or ";" in c else c for c in pyinstaller_cmd)
@@ -131,17 +223,24 @@ def build():
     prepop_zip = os.path.join(dist_dir, "BirdStamp_Prepopulated.zip")
     fresh_zip = os.path.join(dist_dir, "BirdStamp_Fresh.zip")
     legacy_zip = os.path.join(dist_dir, "birdstamp.zip")
+    update_zip = os.path.join(dist_dir, f"BirdStamp_Update-{version}.zip")
+    update_sha = update_zip + ".sha256"
 
     # Only remove what this script owns/produces. Never touch other files
     # already in Distributions (e.g. V2.0.zip).
     force_delete(prepop_dir)
     force_delete(fresh_dir)
-    for legacy in (fresh_zip, prepop_zip, legacy_zip):
+    old_outputs = [fresh_zip, prepop_zip, legacy_zip] + [
+        os.path.join(dist_dir, name)
+        for name in os.listdir(dist_dir)
+        if name.startswith("BirdStamp_Update-")
+    ]
+    for legacy in old_outputs:
         try:
             if os.path.exists(legacy):
                 os.remove(legacy)
         except Exception as e:
-            print(f"WARNING: Could not remove old zip {legacy}: {e}")
+            print(f"WARNING: Could not remove old file {legacy}: {e}")
 
     def _write_readme(target_dir):
         readme_path = os.path.join(target_dir, "README.txt")
@@ -162,6 +261,10 @@ def build():
             "  - Windows 10 or 11\n"
             "  - .NET Framework 4.8\n"
             "  - Microsoft Edge WebView2 Runtime\n\n"
+            "Updates:\n"
+            "  The app checks for new versions automatically. When one is ready,\n"
+            "  a banner offers to restart and install it. Your collection data\n"
+            "  (bird_stamps.db, uploads, my collection sheets) is never replaced.\n\n"
             "Logs:\n"
             "  If something goes wrong, check the log file at:\n"
             "  %LOCALAPPDATA%\\BirdStamp\\logs\\birdstamp.log\n"
@@ -169,21 +272,20 @@ def build():
         with open(readme_path, "w", encoding="utf-8") as f:
             f.write(readme_text)
 
+    # Program files shared by every distribution and by the update package.
+    if os.path.exists(philatelic_xlsx):
+        shutil.copy2(philatelic_xlsx, build_output_dir)
+    _write_readme(build_output_dir)
+
     print("Copying to Fresh distribution...")
     shutil.copytree(build_output_dir, fresh_dir)
-    if os.path.exists(philatelic_xlsx):
-        shutil.copy2(philatelic_xlsx, fresh_dir)
     os.makedirs(os.path.join(fresh_dir, "my collection sheets"), exist_ok=True)
     os.makedirs(os.path.join(fresh_dir, "uploads"), exist_ok=True)
-    _write_readme(fresh_dir)
 
     print("Copying to Prepopulated distribution...")
     shutil.copytree(build_output_dir, prepop_dir)
-    if os.path.exists(philatelic_xlsx):
-        shutil.copy2(philatelic_xlsx, prepop_dir)
     os.makedirs(os.path.join(prepop_dir, "my collection sheets"), exist_ok=True)
     os.makedirs(os.path.join(prepop_dir, "uploads"), exist_ok=True)
-    _write_readme(prepop_dir)
 
     original_db = os.path.join(backend_dir, "bird_stamps.db")
     if os.path.exists(original_db):
@@ -204,33 +306,58 @@ def build():
                 shutil.copy2(uf_src, os.path.join(prepop_dir, "uploads", uf))
 
     print("--- 5. Creating Distribution Zips ---")
-    try:
-        with zipfile.ZipFile(fresh_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-            for root, dirs, files in os.walk(fresh_dir):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    rel_path = os.path.relpath(file_path, dist_dir)
-                    zf.write(file_path, rel_path)
-        print(f"Created {fresh_zip}")
-    except Exception as e:
-        print(f"FATAL: Failed to create {fresh_zip}: {e}")
-        sys.exit(1)
+    for source_dir, zip_path, arc_root in (
+        (fresh_dir, fresh_zip, "BirdStamp_Fresh"),
+        (prepop_dir, prepop_zip, "BirdStamp_Prepopulated"),
+        # App-only package used by the auto-updater: program files at the
+        # zip root, no database or user folders.
+        (build_output_dir, update_zip, ""),
+    ):
+        try:
+            _zip_dir(source_dir, zip_path, arc_root)
+            print(f"Created {zip_path}")
+        except Exception as e:
+            print(f"FATAL: Failed to create {zip_path}: {e}")
+            sys.exit(1)
 
-    try:
-        with zipfile.ZipFile(prepop_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-            for root, dirs, files in os.walk(prepop_dir):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    rel_path = os.path.relpath(file_path, dist_dir)
-                    zf.write(file_path, rel_path)
-        print(f"Created {prepop_zip}")
-    except Exception as e:
-        print(f"FATAL: Failed to create {prepop_zip}: {e}")
-        sys.exit(1)
+    with open(update_sha, "w", encoding="utf-8") as f:
+        f.write(f"{_sha256(update_zip)}  {os.path.basename(update_zip)}\n")
+    print(f"Created {update_sha}")
 
     print("\n--- Build Complete ---")
     print(f"Distributions available in: {dist_dir}")
 
+    if release:
+        print(f"\n--- 6. Publishing GitHub release v{version} ---")
+        gh_cmd = [
+            "gh", "release", "create", f"v{version}",
+            update_zip, update_sha, prepop_zip, fresh_zip,
+            "--repo", repo,
+            "--target", release_commit,
+            "--title", f"BirdStamp {version}",
+        ]
+        if notes_file:
+            gh_cmd += ["--notes-file", notes_file]
+        elif notes:
+            gh_cmd += ["--notes", notes]
+        else:
+            gh_cmd += ["--generate-notes"]
+        print("Uploading release assets (this can take a few minutes)...")
+        result = subprocess.run(gh_cmd, cwd=root_dir)
+        if result.returncode != 0:
+            print("FATAL: Publishing the release failed.")
+            sys.exit(1)
+        print(f"Published v{version}. Installed copies will pick it up automatically.")
+
 
 if __name__ == "__main__":
-    build()
+    parser = argparse.ArgumentParser(description="Build BirdStamp distributions.")
+    parser.add_argument(
+        "--release",
+        action="store_true",
+        help="Also publish a GitHub release so installed apps auto-update.",
+    )
+    parser.add_argument("--notes", help="Release notes text (shown on GitHub).")
+    parser.add_argument("--notes-file", help="Path to a file with release notes.")
+    args = parser.parse_args()
+    build(release=args.release, notes=args.notes, notes_file=args.notes_file)

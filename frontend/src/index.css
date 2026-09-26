@@ -1125,6 +1125,48 @@ body::before {
 }
 
 /* ==========================================================================
+   Update Banner
+   ========================================================================== */
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin: 1rem 1.8rem 0;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  border: 1px solid var(--border-focus);
+  box-shadow: var(--shadow-md);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  transition: var(--theme-transition);
+  animation: toast-in 0.25s var(--ease-smooth);
+}
+
+.update-banner-icon {
+  flex-shrink: 0;
+  color: var(--accent-apricot);
+}
+
+.update-banner-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  line-height: 1.4;
+}
+
+.update-banner-text span {
+  color: var(--text-muted);
+}
+
+.update-banner-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+/* ==========================================================================
    Toasts
    ========================================================================== */
 .toast-container {

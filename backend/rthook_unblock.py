@@ -31,6 +31,17 @@ def _unblock_tree(root):
                 _unblock_file(os.path.join(dirpath, name))
 
 
+def _unblock_top_level(directory):
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return
+    for name in names:
+        path = os.path.join(directory, name)
+        if os.path.isfile(path) and os.path.splitext(name)[1].lower() in _UNBLOCK_EXTENSIONS:
+            _unblock_file(path)
+
+
 def _run():
     if sys.platform != "win32":
         return
@@ -42,7 +53,9 @@ def _run():
         exe_dir = os.path.dirname(sys.executable)
 
         _unblock_tree(meipass)
-        _unblock_tree(exe_dir)
+        # Only the exe dir's own files: _internal is covered above, and walking
+        # everything would also crawl the updater's staging/backup copies.
+        _unblock_top_level(exe_dir)
     except Exception:
         # Never let the runtime hook take down startup.
         pass

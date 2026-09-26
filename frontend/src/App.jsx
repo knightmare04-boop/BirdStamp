@@ -4,6 +4,7 @@ import StampCard from './components/StampCard';
 import CreateCardModal from './components/CreateCardModal';
 import ToastContainer from './components/Toast';
 import ConfirmDialog from './components/ConfirmDialog';
+import UpdateBanner from './components/UpdateBanner';
 import { API_BASE } from './api';
 
 // localStorage can throw (private browsing, disabled storage, quota, etc.),
@@ -83,6 +84,28 @@ function App() {
   const dismissToast = useCallback((id) => {
     setToasts(prev => prev.filter(t => t.id !== id));
   }, []);
+
+  // Auto-update status (checked/downloaded by the desktop app in the background)
+  const [updateInfo, setUpdateInfo] = useState(null);
+  const isUpdateDisabled = updateInfo?.status === 'disabled';
+  useEffect(() => {
+    if (isUpdateDisabled) return undefined;
+    let cancelled = false;
+    const loadUpdate = async () => {
+      try {
+        const res = await axios.get(`${API_BASE}/update`);
+        if (!cancelled) setUpdateInfo(res.data);
+      } catch {
+        // Update status is non-essential; ignore failures.
+      }
+    };
+    loadUpdate();
+    const interval = setInterval(loadUpdate, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [isUpdateDisabled]);
 
   // Persist filter/search state to localStorage
   useEffect(() => {
@@ -370,7 +393,10 @@ function App() {
           </div>
           <div className="brand-titles">
             <h1>BirdStamp Tracker</h1>
-            <span className="brand-subtitle">Naturalist & Philatelic Archive</span>
+            <span className="brand-subtitle">
+              Naturalist & Philatelic Archive
+              {updateInfo?.current_version && ` · v${updateInfo.current_version}`}
+            </span>
           </div>
         </div>
 
@@ -480,6 +506,8 @@ function App() {
           </div>
         </div>
       </header>
+
+      <UpdateBanner update={updateInfo} onError={(message) => showToast(message, 'error')} />
 
       <main className="main-content">
         <aside className="sidebar">
