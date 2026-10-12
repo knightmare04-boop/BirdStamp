@@ -18,11 +18,18 @@ export default function CreateCardModal({
   const [releaseDate, setReleaseDate] = useState('');
   
   // Taxonomy
+  const [order, setOrder] = useState('');
+  const [family, setFamily] = useState('');
   const [birdGroup, setBirdGroup] = useState('');
   const [genus, setGenus] = useState('');
   const [species, setSpecies] = useState('');
   const [category, setCategory] = useState('Commemorative');
   const [stampType, setStampType] = useState('Postage');
+
+  // Taxonomy autofill & validation state
+  const [taxonomyError, setTaxonomyError] = useState('');
+  const [isTaxonomyLoading, setIsTaxonomyLoading] = useState(false);
+  const debounceTimerRef = useRef(null);
 
   // Philatelic Classification
   const [elementGroup, setElementGroup] = useState('');
@@ -58,7 +65,54 @@ export default function CreateCardModal({
     };
   }, [imagePreview]);
 
-  // Auto-fill genus and species when scientific name changes
+  // Taxonomy lookup from backend database
+  const triggerTaxonomyAutofill = async (eng, sci) => {
+    const cleanEng = (eng || '').trim();
+    const cleanSci = (sci || '').trim();
+    if (!cleanEng && !cleanSci) {
+      setTaxonomyError('');
+      return;
+    }
+
+    setIsTaxonomyLoading(true);
+    try {
+      const res = await axios.get(`${API_BASE}/taxonomy/lookup`, {
+        params: {
+          english_name: cleanEng,
+          scientific_name: cleanSci
+        }
+      });
+
+      if (res.data && res.data.found) {
+        if (res.data.order) setOrder(res.data.order);
+        if (res.data.family) setFamily(res.data.family);
+        if (res.data.bird_group && !birdGroup) setBirdGroup(res.data.bird_group);
+        if (res.data.genus && !genus) setGenus(res.data.genus);
+        if (res.data.species && !species) setSpecies(res.data.species);
+        setTaxonomyError('');
+      } else {
+        setTaxonomyError('order and family info not found in existing database. Please fill the fields.');
+      }
+    } catch (err) {
+      console.warn('Taxonomy lookup failed:', err);
+      setTaxonomyError('order and family info not found in existing database. Please fill the fields.');
+    } finally {
+      setIsTaxonomyLoading(false);
+    }
+  };
+
+  const scheduleAutofill = (eng, sci) => {
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = setTimeout(() => {
+      triggerTaxonomyAutofill(eng, sci);
+    }, 550);
+  };
+
+  const handleEnglishNameChange = (val) => {
+    setEnglishName(val);
+    scheduleAutofill(val, scientificName);
+  };
+
   const handleScientificNameChange = (val) => {
     setScientificName(val);
     const parts = val.trim().split(/\s+/);
@@ -67,6 +121,51 @@ export default function CreateCardModal({
     }
     if (parts.length >= 2 && parts[1] && !species) {
       setSpecies(parts[1]);
+    }
+    scheduleAutofill(englishName, val);
+  };
+
+  // Save filled taxonomy into user's local database
+  const saveTaxonomyToLocalDb = async (ordVal = order, famVal = family) => {
+    const o = (ordVal || '').trim();
+    const f = (famVal || '').trim();
+    const eng = englishName.trim();
+    const sci = scientificName.trim();
+    if ((o || f) && (eng || sci)) {
+      try {
+        await axios.post(`${API_BASE}/taxonomy`, {
+          english_name: eng,
+          scientific_name: sci,
+          order: o,
+          family: f,
+          bird_group: birdGroup.trim(),
+          genus: genus.trim(),
+          species: species.trim()
+        });
+        setTaxonomyError('');
+      } catch (e) {
+        console.warn('Could not save taxonomy to local database:', e);
+      }
+    }
+  };
+
+  const handleOrderChange = (val) => {
+    setOrder(val);
+    if (val.trim() && family.trim()) {
+      setTaxonomyError('');
+    }
+  };
+
+  const handleFamilyChange = (val) => {
+    setFamily(val);
+    if (val.trim() && order.trim()) {
+      setTaxonomyError('');
+    }
+  };
+
+  const handleTaxonomyBlur = () => {
+    if (order.trim() || family.trim()) {
+      saveTaxonomyToLocalDb(order, family);
     }
   };
 
@@ -166,6 +265,8 @@ export default function CreateCardModal({
         year: year.trim(),
         face_value: faceValue.trim(),
         release_date: releaseDate.trim(),
+        order: order.trim(),
+        family: family.trim(),
         bird_group: birdGroup.trim(),
         genus: genus.trim(),
         species: species.trim(),
@@ -183,6 +284,11 @@ export default function CreateCardModal({
       };
 
       const createRes = await axios.post(`${API_BASE}/stamps`, payload);
+      
+      // Also persist to local taxonomy database
+      if (order.trim() || family.trim()) {
+        saveTaxonomyToLocalDb(order, family);
+      }
       
       if (onSuccess) {
         onSuccess(createRes.data);
@@ -348,7 +454,8 @@ export default function CreateCardModal({
                       type="text" 
                       placeholder="e.g. Bald Eagle, Barn Owl..." 
                       value={englishName}
-                      onChange={e => setEnglishName(e.target.value)}
+                      onChange={e => handleEnglishNameChange(e.target.value)}
+                      onBlur={() => triggerTaxonomyAutofill(englishName, scientificName)}
                       required
                     />
                   </div>
@@ -360,6 +467,7 @@ export default function CreateCardModal({
                       placeholder="e.g. Haliaeetus leucocephalus" 
                       value={scientificName}
                       onChange={e => handleScientificNameChange(e.target.value)}
+                      onBlur={() => triggerTaxonomyAutofill(englishName, scientificName)}
                     />
                   </div>
                 </div>
@@ -429,6 +537,46 @@ export default function CreateCardModal({
                 <div className="create-section-header">
                   <span className="section-step">2</span>
                   <h3>Ornithological Taxonomy</h3>
+                  {isTaxonomyLoading && (
+                    <span className="taxonomy-loading-pill">
+                      Autofilling taxonomy...
+                    </span>
+                  )}
+                </div>
+
+                {taxonomyError && (
+                  <div className="taxonomy-warning-alert">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="12" y1="8" x2="12" y2="12" />
+                      <line x1="12" y1="16" x2="12.01" y2="16" />
+                    </svg>
+                    <span>{taxonomyError}</span>
+                  </div>
+                )}
+
+                <div className="create-grid-2">
+                  <div className="create-field-group">
+                    <label>Order</label>
+                    <input 
+                      type="text" 
+                      placeholder="e.g. Accipitriformes, Passeriformes..." 
+                      value={order}
+                      onChange={e => handleOrderChange(e.target.value)}
+                      onBlur={handleTaxonomyBlur}
+                    />
+                  </div>
+
+                  <div className="create-field-group">
+                    <label>Family</label>
+                    <input 
+                      type="text" 
+                      placeholder="e.g. Accipitridae, Falconidae..." 
+                      value={family}
+                      onChange={e => handleFamilyChange(e.target.value)}
+                      onBlur={handleTaxonomyBlur}
+                    />
+                  </div>
                 </div>
 
                 <div className="create-grid-3">

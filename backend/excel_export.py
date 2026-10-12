@@ -51,7 +51,7 @@ def export_collection_to_excel(db: Session) -> dict:
         # 2. Define standard columns matching models and collection metadata
         columns = [
             'ID', 'Country', 'Year', 'Face Value', 'English Name', 'Scientific Name',
-            'Bird Group', 'Genus', 'Species', 'Category', 'Type', 'Release Date',
+            'Order', 'Family', 'Bird Group', 'Genus', 'Species', 'Category', 'Type', 'Release Date',
             'Image URL', 'My Collection', 'Condition', 'Duplicate', 'Error',
             'Description', 'Element Group', 'Element', 'Element Description'
         ]
@@ -67,6 +67,8 @@ def export_collection_to_excel(db: Session) -> dict:
                 'Face Value': s.face_value or "",
                 'English Name': s.english_name or "",
                 'Scientific Name': s.scientific_name or "",
+                'Order': s.order or "",
+                'Family': s.family or "",
                 'Bird Group': s.bird_group or "",
                 'Genus': s.genus or "",
                 'Species': s.species or "",

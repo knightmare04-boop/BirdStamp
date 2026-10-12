@@ -20,6 +20,7 @@ import scraper
 import sync
 import philatelic_data
 import updater
+import taxonomy_service
 from apscheduler.schedulers.background import BackgroundScheduler
 from contextlib import asynccontextmanager
 
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 # Run auto-migration on startup
 ensure_db_schema()
 models.Base.metadata.create_all(bind=engine)
+taxonomy_service.ensure_taxonomy_populated()
 
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB
 
@@ -104,6 +106,8 @@ def get_stamps(
     collection_status: str = 'all', 
     element_group: Optional[str] = None,
     element: Optional[str] = None,
+    order: Optional[str] = None,
+    family: Optional[str] = None,
     bird_group: Optional[str] = None,
     genus: Optional[str] = None,
     species: Optional[str] = None,
@@ -117,6 +121,8 @@ def get_stamps(
             or_(
                 models.Stamp.english_name.ilike(search_term),
                 models.Stamp.scientific_name.ilike(search_term),
+                models.Stamp.order.ilike(search_term),
+                models.Stamp.family.ilike(search_term),
                 models.Stamp.bird_group.ilike(search_term),
                 models.Stamp.genus.ilike(search_term),
                 models.Stamp.species.ilike(search_term)
@@ -131,6 +137,12 @@ def get_stamps(
         
     if element:
         query = query.filter(models.Stamp.element.ilike(f"%{element}%"))
+
+    if order:
+        query = query.filter(models.Stamp.order.ilike(f"%{order}%"))
+
+    if family:
+        query = query.filter(models.Stamp.family.ilike(f"%{family}%"))
 
     if bird_group:
         query = query.filter(models.Stamp.bird_group.ilike(f"%{bird_group}%"))
@@ -166,6 +178,55 @@ def get_options():
     """Retrieve dropdown options for Condition, Element Groups, and Elements with descriptions."""
     return philatelic_data.get_philatelic_options()
 
+@app.get("/api/taxonomy/lookup", response_model=schemas.TaxonomyLookupResponse)
+def get_taxonomy_lookup(
+    english_name: Optional[str] = None,
+    scientific_name: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    result = taxonomy_service.lookup_taxonomy(db, english_name=english_name, scientific_name=scientific_name)
+    if result:
+        return {
+            "found": True,
+            "order": result.get("order", ""),
+            "family": result.get("family", ""),
+            "bird_group": result.get("bird_group", ""),
+            "genus": result.get("genus", ""),
+            "species": result.get("species", "")
+        }
+    return {
+        "found": False,
+        "error": "order and family info not found in existing database. Please fill the fields."
+    }
+
+@app.post("/api/taxonomy")
+def save_taxonomy_entry(data: schemas.TaxonomySaveRequest, db: Session = Depends(get_db)):
+    saved = taxonomy_service.save_taxonomy(
+        db,
+        english_name=data.english_name,
+        scientific_name=data.scientific_name,
+        order=data.order,
+        family=data.family,
+        bird_group=data.bird_group,
+        genus=data.genus,
+        species=data.species
+    )
+    if not saved:
+        raise HTTPException(status_code=400, detail="Order or Family must be specified along with a bird name.")
+    return {
+        "status": "success",
+        "message": "Taxonomy saved to database",
+        "entry": {
+            "english_name": saved.english_name,
+            "scientific_name": saved.scientific_name,
+            "order": saved.order,
+            "family": saved.family,
+            "bird_group": saved.bird_group,
+            "genus": saved.genus,
+            "species": saved.species
+        }
+    }
+
 @app.patch("/api/stamps/{stamp_id}", response_model=schemas.Stamp)
 def update_stamp(stamp_id: int, stamp: schemas.StampUpdate, db: Session = Depends(get_db)):
     db_stamp = db.query(models.Stamp).filter(models.Stamp.id == stamp_id).first()
@@ -178,6 +239,20 @@ def update_stamp(stamp_id: int, stamp: schemas.StampUpdate, db: Session = Depend
         
     db.commit()
     db.refresh(db_stamp)
+
+    # Automatically save updated taxonomy to local database
+    if db_stamp.order or db_stamp.family:
+        taxonomy_service.save_taxonomy(
+            db,
+            english_name=db_stamp.english_name,
+            scientific_name=db_stamp.scientific_name,
+            order=db_stamp.order,
+            family=db_stamp.family,
+            bird_group=db_stamp.bird_group,
+            genus=db_stamp.genus,
+            species=db_stamp.species
+        )
+
     return db_stamp
 
 @app.post("/api/stamps/{stamp_id}/duplicate", response_model=schemas.Stamp)
@@ -192,6 +267,8 @@ def duplicate_stamp(stamp_id: int, db: Session = Depends(get_db)):
         face_value=db_stamp.face_value,
         english_name=db_stamp.english_name,
         scientific_name=db_stamp.scientific_name,
+        order=db_stamp.order,
+        family=db_stamp.family,
         bird_group=db_stamp.bird_group,
         genus=db_stamp.genus,
         species=db_stamp.species,
@@ -286,12 +363,17 @@ def create_stamp(stamp_data: schemas.StampCreate, db: Session = Depends(get_db))
         if not species and len(parts) >= 2:
             species = parts[1]
 
+    order = (stamp_data.order or "").strip()
+    family = (stamp_data.family or "").strip()
+
     new_stamp = models.Stamp(
         country=(stamp_data.country or "").strip(),
         year=str(stamp_data.year or "").strip(),
         face_value=(stamp_data.face_value or "").strip(),
         english_name=(stamp_data.english_name or "").strip(),
         scientific_name=sci_name,
+        order=order,
+        family=family,
         bird_group=(stamp_data.bird_group or "").strip(),
         genus=genus,
         species=species,
@@ -311,6 +393,20 @@ def create_stamp(stamp_data: schemas.StampCreate, db: Session = Depends(get_db))
     db.add(new_stamp)
     db.commit()
     db.refresh(new_stamp)
+
+    # Automatically save new/custom taxonomy to local database
+    if order or family:
+        taxonomy_service.save_taxonomy(
+            db,
+            english_name=new_stamp.english_name,
+            scientific_name=new_stamp.scientific_name,
+            order=order,
+            family=family,
+            bird_group=new_stamp.bird_group,
+            genus=genus,
+            species=species
+        )
+
     return new_stamp
 
 class SyncRequest(BaseModel):

@@ -57,6 +57,12 @@ def run_sync(excel_path: str, db: Session):
                 desc_val = row.get('Description')
                 description = str(desc_val).strip() if pd.notnull(desc_val) else ""
                 
+                order_val = row.get('Order')
+                row_order = str(order_val).strip() if pd.notnull(order_val) and str(order_val).strip().lower() != 'nan' else ""
+                
+                family_val = row.get('Family')
+                row_family = str(family_val).strip() if pd.notnull(family_val) and str(family_val).strip().lower() != 'nan' else ""
+                
                 eng_name = str(row.get('English name', '')).strip()
                 face_val = str(row.get('Face value', '')).strip()
                 
@@ -115,6 +121,10 @@ def run_sync(excel_path: str, db: Session):
                     stamp.duplicate = duplicate
                     stamp.error = error
                     stamp.description = description
+                    if row_order and not stamp.order:
+                        stamp.order = row_order
+                    if row_family and not stamp.family:
+                        stamp.family = row_family
                     db.flush()
                     assigned_db_ids.add(stamp.id)
                     updated_count += 1
@@ -125,6 +135,11 @@ def run_sync(excel_path: str, db: Session):
                         face_value=prototype_stamp.face_value,
                         english_name=prototype_stamp.english_name,
                         scientific_name=prototype_stamp.scientific_name,
+                        order=row_order or prototype_stamp.order,
+                        family=row_family or prototype_stamp.family,
+                        bird_group=prototype_stamp.bird_group,
+                        genus=prototype_stamp.genus,
+                        species=prototype_stamp.species,
                         category=prototype_stamp.category,
                         stamp_type=prototype_stamp.stamp_type,
                         release_date=prototype_stamp.release_date,

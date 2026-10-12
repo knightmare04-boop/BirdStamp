@@ -146,6 +146,14 @@ export default function StampCard({
           {/* Bird Taxonomy Breakdown */}
           <div className="modal-taxonomy-grid">
             <div className="taxonomy-item">
+              <span className="taxonomy-label">Order</span>
+              <span className="taxonomy-value" style={{ color: 'var(--tag-order-text, var(--siltstone-cream))' }}>{stamp.order || '—'}</span>
+            </div>
+            <div className="taxonomy-item">
+              <span className="taxonomy-label">Family</span>
+              <span className="taxonomy-value" style={{ color: 'var(--tag-family-text, var(--moss-300))' }}>{stamp.family || '—'}</span>
+            </div>
+            <div className="taxonomy-item">
               <span className="taxonomy-label">Bird Group</span>
               <span className="taxonomy-value" style={{ color: 'var(--tag-group-text)' }}>{stamp.bird_group || '—'}</span>
             </div>
@@ -214,8 +222,20 @@ export default function StampCard({
             <span className="stamp-badge">{stamp.face_value || '—'}</span>
           </div>
 
-          {/* Bird Taxonomy Display: Group (Seafoam), Genus (Moss), Species (Amber) */}
+          {/* Bird Taxonomy Display: Order, Family, Group, Genus, Species */}
           <div className="stamp-taxonomy">
+            {stamp.order ? (
+              <span className="taxonomy-tag order-tag" title={`Order: ${stamp.order}`}>
+                <span className="tag-label">Ord:</span>
+                <span className="tag-text">{stamp.order}</span>
+              </span>
+            ) : null}
+            {stamp.family ? (
+              <span className="taxonomy-tag family-tag" title={`Family: ${stamp.family}`}>
+                <span className="tag-label">Fam:</span>
+                <span className="tag-text">{stamp.family}</span>
+              </span>
+            ) : null}
             {stamp.bird_group ? (
               <span className="taxonomy-tag group-tag" title={`Bird Group: ${stamp.bird_group}`}>
                 <span className="tag-icon">🐦</span>

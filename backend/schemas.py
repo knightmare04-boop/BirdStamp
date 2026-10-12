@@ -14,6 +14,8 @@ class StampBase(BaseModel):
     stamp_type: Optional[str] = None
     release_date: Optional[str] = None
     image_url: Optional[str] = None
+    order: Optional[str] = ""
+    family: Optional[str] = ""
     bird_group: Optional[str] = ""
     genus: Optional[str] = ""
     species: Optional[str] = ""
@@ -38,12 +40,16 @@ class StampUpdate(BaseModel):
     element_group: Optional[str] = None
     element: Optional[str] = None
     element_description: Optional[str] = None
+    order: Optional[str] = None
+    family: Optional[str] = None
     bird_group: Optional[str] = None
     genus: Optional[str] = None
     species: Optional[str] = None
 
 class Stamp(StampBase):
     id: int
+    order: str = ""
+    family: str = ""
     bird_group: str = ""
     genus: str = ""
     species: str = ""
@@ -56,6 +62,25 @@ class Stamp(StampBase):
     element_description: str
 
     model_config = ConfigDict(from_attributes=True)
+
+class TaxonomyLookupResponse(BaseModel):
+    found: bool
+    order: Optional[str] = ""
+    family: Optional[str] = ""
+    bird_group: Optional[str] = ""
+    genus: Optional[str] = ""
+    species: Optional[str] = ""
+    error: Optional[str] = None
+
+class TaxonomySaveRequest(BaseModel):
+    english_name: Optional[str] = ""
+    scientific_name: Optional[str] = ""
+    order: Optional[str] = ""
+    family: Optional[str] = ""
+    bird_group: Optional[str] = ""
+    genus: Optional[str] = ""
+    species: Optional[str] = ""
+
 
 from typing import Generic, TypeVar, List, Dict
 T = TypeVar("T")

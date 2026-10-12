@@ -122,6 +122,14 @@
   --accent-seafoam: var(--seafoam-400);
 
   /* Taxonomy Badges */
+  --tag-order-bg: rgba(203, 189, 147, 0.16);
+  --tag-order-text: var(--siltstone-cream);
+  --tag-order-border: rgba(203, 189, 147, 0.35);
+
+  --tag-family-bg: rgba(162, 220, 183, 0.16);
+  --tag-family-text: var(--moss-300);
+  --tag-family-border: rgba(162, 220, 183, 0.35);
+
   --tag-group-bg: rgba(68, 158, 149, 0.16);
   --tag-group-text: var(--seafoam-300);
   --tag-group-border: rgba(68, 158, 149, 0.32);
@@ -180,6 +188,14 @@
   --accent-seafoam: var(--seafoam-700);
 
   /* Taxonomy Badges */
+  --tag-order-bg: var(--silt-light-200);
+  --tag-order-text: var(--silt-light-800);
+  --tag-order-border: rgba(163, 148, 103, 0.32);
+
+  --tag-family-bg: var(--moss-100);
+  --tag-family-text: var(--moss-700);
+  --tag-family-border: rgba(45, 90, 60, 0.28);
+
   --tag-group-bg: var(--seafoam-100);
   --tag-group-text: var(--seafoam-700);
   --tag-group-border: rgba(32, 89, 83, 0.25);
@@ -761,6 +777,20 @@ body::before {
   transform: translateY(-1px);
 }
 
+/* Order: Siltstone Cream / Tan */
+.order-tag {
+  background: var(--tag-order-bg);
+  color: var(--tag-order-text);
+  border: 1px solid var(--tag-order-border);
+}
+
+/* Family: Moss / Sage */
+.family-tag {
+  background: var(--tag-family-bg);
+  color: var(--tag-family-text);
+  border: 1px solid var(--tag-family-border);
+}
+
 /* Bird Group: Seafoam */
 .group-tag {
   background: var(--tag-group-bg);
@@ -780,6 +810,38 @@ body::before {
   background: var(--tag-species-bg);
   color: var(--tag-species-text);
   border: 1px solid var(--tag-species-border);
+}
+
+.taxonomy-warning-alert {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.7rem 0.9rem;
+  margin-bottom: 0.9rem;
+  background: rgba(226, 76, 47, 0.12);
+  border: 1px solid rgba(226, 76, 47, 0.38);
+  border-radius: var(--radius-md);
+  color: #FFA494;
+  font-size: 0.82rem;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+[data-theme="light"] .taxonomy-warning-alert {
+  background: var(--coral-100);
+  border-color: rgba(194, 56, 30, 0.35);
+  color: var(--coral-600);
+}
+
+.taxonomy-loading-pill {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent-apricot);
+  background: rgba(255, 177, 110, 0.12);
+  border: 1px solid rgba(255, 177, 110, 0.25);
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius-full);
+  margin-left: auto;
 }
 
 .tag-label {

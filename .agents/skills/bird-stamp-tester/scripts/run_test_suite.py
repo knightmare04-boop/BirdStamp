@@ -112,7 +112,7 @@ def run_all_tests():
             columns = {row[1]: row[2] for row in cursor.fetchall()}
             required_cols = [
                 "id", "country", "year", "face_value", "english_name",
-                "scientific_name", "bird_group", "genus", "species", "category", "stamp_type", "release_date",
+                "scientific_name", "order", "family", "bird_group", "genus", "species", "category", "stamp_type", "release_date",
                 "image_url", "my_collection", "condition", "duplicate",
                 "error", "description", "element_group", "element", "element_description"
             ]
@@ -168,9 +168,9 @@ def run_all_tests():
                 data = res.json()
                 if "items" in data and "total" in data and "page" in data and "limit" in data:
                     sample_item = data['items'][0] if data['items'] else {}
-                    has_tax = "bird_group" in sample_item and "genus" in sample_item and "species" in sample_item
+                    has_tax = "order" in sample_item and "family" in sample_item and "bird_group" in sample_item and "genus" in sample_item and "species" in sample_item
                     if has_tax:
-                        tracker.add_result("API", "GET /api/stamps (Default)", "PASS", f"Retrieved {len(data['items'])} items with taxonomy fields, total: {data['total']:,}")
+                        tracker.add_result("API", "GET /api/stamps (Default)", "PASS", f"Retrieved {len(data['items'])} items with order & family taxonomy fields, total: {data['total']:,}")
                     else:
                         tracker.add_result("API", "GET /api/stamps (Default)", "FAIL", "Response items missing bird taxonomy fields")
                 else:
@@ -337,6 +337,58 @@ def run_all_tests():
                 else:
                     tracker.add_result("CRUD", f"POST /api/stamps/{test_stamp_id}/duplicate", "FAIL", f"Status {dup_res.status_code}")
 
+                # Test Taxonomy Autofill Lookup and Manual Addition
+                try:
+                    # 1. Existing bird lookup
+                    res_look_found = requests.get(f"{base_url}/api/taxonomy/lookup?english_name=Common+Ostrich")
+                    if res_look_found.status_code == 200 and res_look_found.json().get("found"):
+                        t_data = res_look_found.json()
+                        tracker.add_result("Taxonomy", "GET /api/taxonomy/lookup (Found)", "PASS", f"Found Common Ostrich -> Order: {t_data.get('order')}, Family: {t_data.get('family')}")
+                    else:
+                        tracker.add_result("Taxonomy", "GET /api/taxonomy/lookup (Found)", "FAIL", f"Failed to lookup Common Ostrich: {res_look_found.text}")
+
+                    # 2. Non-existent bird lookup -> must return exact requested error message
+                    res_look_missing = requests.get(f"{base_url}/api/taxonomy/lookup?english_name=NonExistentBirdXYZ99")
+                    expected_err = "order and family info not found in existing database. Please fill the fields."
+                    if res_look_missing.status_code == 200 and not res_look_missing.json().get("found") and res_look_missing.json().get("error") == expected_err:
+                        tracker.add_result("Taxonomy", "GET /api/taxonomy/lookup (Not Found -> Error)", "PASS", f"Received exact error: {expected_err}")
+                    else:
+                        tracker.add_result("Taxonomy", "GET /api/taxonomy/lookup (Not Found -> Error)", "FAIL", f"Unexpected response: {res_look_missing.text}")
+
+                    # 3. Add custom bird to local database via POST /api/taxonomy
+                    custom_tax_payload = {
+                        "english_name": "Mystic Phoenix Bird",
+                        "scientific_name": "Phoenicis mysticus",
+                        "order": "Phoeniciformes",
+                        "family": "Phoenicidae",
+                        "bird_group": "Mythological",
+                        "genus": "Phoenicis",
+                        "species": "mysticus"
+                    }
+                    res_tax_save = requests.post(f"{base_url}/api/taxonomy", json=custom_tax_payload)
+                    if res_tax_save.status_code == 200 and res_tax_save.json().get("status") == "success":
+                        tracker.add_result("Taxonomy", "POST /api/taxonomy (Save to DB)", "PASS", "Successfully added custom bird taxonomy to local database")
+                        
+                        # Verify it is now found in lookup
+                        res_look_new = requests.get(f"{base_url}/api/taxonomy/lookup?scientific_name=Phoenicis+mysticus")
+                        if res_look_new.status_code == 200 and res_look_new.json().get("found"):
+                            tracker.add_result("Taxonomy", "Autofill Verification of Added Specimen", "PASS", "Custom specimen immediately resolved via autofill lookup")
+                        else:
+                            tracker.add_result("Taxonomy", "Autofill Verification of Added Specimen", "FAIL", "Custom specimen not found after save")
+                    else:
+                        tracker.add_result("Taxonomy", "POST /api/taxonomy (Save to DB)", "FAIL", f"Failed to save custom taxonomy: {res_tax_save.text}")
+                except Exception as e:
+                    tracker.add_result("Taxonomy", "Taxonomy Lifecycle", "FAIL", str(e))
+                finally:
+                    # Clean up test taxonomy entry
+                    try:
+                        import sqlite3
+                        with sqlite3.connect(db_file) as conn:
+                            conn.execute("DELETE FROM taxonomy_reference WHERE english_name = 'Mystic Phoenix Bird'")
+                            conn.commit()
+                    except Exception:
+                        pass
+
                 # Test Custom Card Creation & Specimen Image Upload
                 try:
                     test_img_bytes = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"
@@ -346,13 +398,15 @@ def run_all_tests():
                         uploaded_url = res_upload.json()["image_url"]
                         tracker.add_result("CRUD", "POST /api/upload-image", "PASS", f"Uploaded specimen image: {uploaded_url}")
                         
-                        # Create custom stamp card
+                        # Create custom stamp card with order & family
                         custom_stamp_payload = {
                             "english_name": "Test Emperor Penguin",
                             "scientific_name": "Aptenodytes forsteri",
                             "country": "Antarctica",
                             "year": "2025",
                             "face_value": "$5.00",
+                            "order": "Sphenisciformes",
+                            "family": "Spheniscidae",
                             "bird_group": "Penguins",
                             "category": "Commemorative",
                             "stamp_type": "Postage",
@@ -370,18 +424,32 @@ def run_all_tests():
                         if res_create.status_code == 200:
                             created_data = res_create.json()
                             created_id = created_data["id"]
-                            if created_data["english_name"] == "Test Emperor Penguin" and created_data["genus"] == "Aptenodytes":
-                                tracker.add_result("CRUD", "POST /api/stamps (Create Card)", "PASS", f"Custom stamp created -> ID {created_id}, auto-genus Aptenodytes")
+                            if created_data["english_name"] == "Test Emperor Penguin" and created_data["genus"] == "Aptenodytes" and created_data["order"] == "Sphenisciformes" and created_data["family"] == "Spheniscidae":
+                                tracker.add_result("CRUD", "POST /api/stamps (Create Card with Order & Family)", "PASS", f"Custom stamp created -> ID {created_id}, Order: Sphenisciformes, Family: Spheniscidae")
                                 
-                                # Verify search finds it
-                                res_search = requests.get(f"{base_url}/api/stamps?search=Aptenodytes")
+                                # Verify search finds it by order
+                                res_search = requests.get(f"{base_url}/api/stamps?search=Sphenisciformes")
                                 if res_search.status_code == 200 and res_search.json()["total"] > 0:
-                                    tracker.add_result("CRUD", "Search Custom Stamp", "PASS", "Found custom card in search query")
+                                    tracker.add_result("CRUD", "Search Custom Stamp by Order", "PASS", "Found custom card in search query by order name")
                                 else:
-                                    tracker.add_result("CRUD", "Search Custom Stamp", "FAIL", "Custom card not found in search")
+                                    tracker.add_result("CRUD", "Search Custom Stamp by Order", "FAIL", "Custom card not found in search by order")
                                     
                                 # Delete created stamp
                                 requests.delete(f"{base_url}/api/stamps/{created_id}")
+
+                                # Clean up uploaded image file
+                                try:
+                                    img_filename = os.path.basename(uploaded_url)
+                                    img_path = os.path.join(root_dir, "backend", "uploads", img_filename)
+                                    if os.path.exists(img_path):
+                                        os.remove(img_path)
+                                    # Also clean up test taxonomy entry created for Aptenodytes forsteri
+                                    import sqlite3
+                                    with sqlite3.connect(db_file) as conn:
+                                        conn.execute("DELETE FROM taxonomy_reference WHERE english_name = 'Test Emperor Penguin'")
+                                        conn.commit()
+                                except Exception:
+                                    pass
                             else:
                                 tracker.add_result("CRUD", "POST /api/stamps (Create Card)", "FAIL", f"Unexpected response: {created_data}")
                         else:
@@ -587,14 +655,14 @@ def run_all_tests():
                         df_exp = pd.read_excel(exported_file)
                         expected_cols = [
                             'ID', 'Country', 'Year', 'Face Value', 'English Name', 'Scientific Name',
-                            'Bird Group', 'Genus', 'Species', 'Category', 'Type', 'Release Date',
+                            'Order', 'Family', 'Bird Group', 'Genus', 'Species', 'Category', 'Type', 'Release Date',
                             'Image URL', 'My Collection', 'Condition', 'Duplicate', 'Error',
                             'Description', 'Element Group', 'Element', 'Element Description'
                         ]
                         cols_valid = all(c in df_exp.columns for c in expected_cols)
                         if cols_valid and len(df_exp) > 0:
                             tracker.add_result("Excel Export", "POST /api/export Execution & Verification", "PASS", 
-                                               f"Successfully exported {len(df_exp):,} rows with {len(df_exp.columns)} columns to {os.path.basename(exported_file)}")
+                                               f"Successfully exported {len(df_exp):,} rows with {len(df_exp.columns)} columns (including Order and Family) to {os.path.basename(exported_file)}")
                         else:
                             tracker.add_result("Excel Export", "POST /api/export Execution & Verification", "FAIL", 
                                                f"Exported sheet missing required columns or empty. Found {len(df_exp)} rows, columns: {list(df_exp.columns)}")

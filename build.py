@@ -182,6 +182,14 @@ def build(release=False, notes=None, notes_file=None):
     if os.path.exists(philatelic_xlsx):
         add_data_args.append(f"--add-data={philatelic_xlsx};.")
 
+    collection_candidates = [
+        os.path.join(root_dir, "data", "collections", "My Collection_Final List_1.1.xlsx"),
+        os.path.join(root_dir, "My Collection_Final List_1.1.xlsx"),
+    ]
+    collection_xlsx = next((p for p in collection_candidates if os.path.exists(p)), collection_candidates[0])
+    if os.path.exists(collection_xlsx):
+        add_data_args.append(f"--add-data={collection_xlsx};data/collections")
+
     runtime_hook = os.path.join(backend_dir, "rthook_unblock.py")
 
     pyinstaller_cmd = [
@@ -195,6 +203,7 @@ def build(release=False, notes=None, notes_file=None):
         "--hidden-import", "app_log",
         "--hidden-import", "updater",
         "--hidden-import", "version",
+        "--hidden-import", "taxonomy_service",
     ] + add_data_args + ["desktop.py"]
 
     cmd_str = " ".join(f'"{c}"' if " " in c or ";" in c else c for c in pyinstaller_cmd)
@@ -275,6 +284,10 @@ def build(release=False, notes=None, notes_file=None):
     # Program files shared by every distribution and by the update package.
     if os.path.exists(philatelic_xlsx):
         shutil.copy2(philatelic_xlsx, build_output_dir)
+    if os.path.exists(collection_xlsx):
+        data_coll_dir = os.path.join(build_output_dir, "data", "collections")
+        os.makedirs(data_coll_dir, exist_ok=True)
+        shutil.copy2(collection_xlsx, data_coll_dir)
     _write_readme(build_output_dir)
 
     print("Copying to Fresh distribution...")

@@ -114,6 +114,8 @@ def ensure_db_schema():
         columns = [row[1] for row in cursor.fetchall()]
         
         required_columns = {
+            "order": "VARCHAR DEFAULT ''",
+            "family": "VARCHAR DEFAULT ''",
             "bird_group": "VARCHAR DEFAULT ''",
             "genus": "VARCHAR DEFAULT ''",
             "species": "VARCHAR DEFAULT ''",
@@ -130,10 +132,26 @@ def ensure_db_schema():
         for col_name, col_type in required_columns.items():
             if col_name not in columns:
                 try:
-                    cursor.execute(f"ALTER TABLE stamps ADD COLUMN {col_name} {col_type}")
+                    cursor.execute(f'ALTER TABLE stamps ADD COLUMN "{col_name}" {col_type}')
                     logger.info("Added missing column '%s' to stamps table.", col_name)
                 except Exception:
                     logger.exception("Error adding column '%s'", col_name)
+
+        # Ensure taxonomy_reference table exists
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS taxonomy_reference (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                english_name VARCHAR DEFAULT '',
+                scientific_name VARCHAR DEFAULT '',
+                "order" VARCHAR DEFAULT '',
+                family VARCHAR DEFAULT '',
+                bird_group VARCHAR DEFAULT '',
+                genus VARCHAR DEFAULT '',
+                species VARCHAR DEFAULT ''
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS ix_taxref_eng ON taxonomy_reference (english_name);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS ix_taxref_sci ON taxonomy_reference (scientific_name);")
 
         conn.commit()
     except Exception:

@@ -16,6 +16,8 @@ class Stamp(Base):
     image_url = Column(String)
     
     # Bird Taxonomy Data
+    order = Column("order", String, default="", index=True)
+    family = Column(String, default="", index=True)
     bird_group = Column(String, default="", index=True)
     genus = Column(String, default="", index=True)
     species = Column(String, default="", index=True)
@@ -29,3 +31,16 @@ class Stamp(Base):
     element_group = Column(String, default="")
     element = Column(String, default="")
     element_description = Column(String, default="")
+
+class TaxonomyReference(Base):
+    __tablename__ = "taxonomy_reference"
+
+    id = Column(Integer, primary_key=True, index=True)
+    english_name = Column(String, default="", index=True)
+    scientific_name = Column(String, default="", index=True)
+    order = Column("order", String, default="")
+    family = Column(String, default="")
+    bird_group = Column(String, default="")
+    genus = Column(String, default="")
+    species = Column(String, default="")
+
