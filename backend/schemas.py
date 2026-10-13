@@ -65,6 +65,8 @@ class Stamp(StampBase):
 
 class TaxonomyLookupResponse(BaseModel):
     found: bool
+    english_name: Optional[str] = ""
+    scientific_name: Optional[str] = ""
     order: Optional[str] = ""
     family: Optional[str] = ""
     bird_group: Optional[str] = ""

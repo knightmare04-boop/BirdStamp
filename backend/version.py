@@ -4,6 +4,6 @@ Bump __version__ before running `build.py --release`. Releases are published
 to GitHub as tag v<__version__>, and installed copies of the app update
 themselves from the latest release (see updater.py).
 """
-__version__ = "2.2.2"
+__version__ = "2.2.3"
 
 GITHUB_REPO = "knightmare04-boop/BirdStamp"

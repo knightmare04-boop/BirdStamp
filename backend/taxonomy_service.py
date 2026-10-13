@@ -419,8 +419,10 @@ def ensure_taxonomy_populated():
 def lookup_taxonomy(db: Session, english_name: Optional[str] = None, scientific_name: Optional[str] = None) -> Optional[Dict[str, str]]:
     """
     Looks up bird taxonomy based on English common name or Scientific binomial name.
-    Checks taxonomy_reference first, then stamps table as fallback.
-    Returns dictionary with order, family, bird_group, genus, species, or None.
+    Provides two-way resolution:
+    - Given scientific_name -> resolves english_name (Common Name) + order, family, etc.
+    - Given english_name -> resolves scientific_name + order, family, etc.
+    Checks stamps catalog first for established names, then taxonomy_reference.
     """
     clean_eng = clean_val(english_name).strip()
     clean_sci = clean_val(scientific_name).strip()
@@ -428,77 +430,116 @@ def lookup_taxonomy(db: Session, english_name: Optional[str] = None, scientific_
     if not clean_eng and not clean_sci:
         return None
 
-    # 1. Exact match by scientific name in taxonomy_reference
+    # Priority 1: When scientific_name is provided, resolve Common Name and taxonomy
     if clean_sci:
-        ref = db.query(models.TaxonomyReference).filter(
-            func.lower(models.TaxonomyReference.scientific_name) == clean_sci.lower()
-        ).first()
-        if ref and (ref.order or ref.family):
+        # Check stamps catalog first (most relevant common names)
+        stamp = db.query(models.Stamp).filter(
+            func.lower(models.Stamp.scientific_name) == clean_sci.lower(),
+            models.Stamp.english_name != "",
+            models.Stamp.english_name.isnot(None),
+            or_(models.Stamp.order != "", models.Stamp.family != "")
+        ).order_by(models.Stamp.my_collection.desc(), models.Stamp.id.asc()).first()
+        if stamp and (stamp.order or stamp.family):
+            parts = (stamp.scientific_name or clean_sci).split()
             return {
+                "english_name": stamp.english_name or clean_eng,
+                "scientific_name": stamp.scientific_name or clean_sci,
+                "order": stamp.order or "",
+                "family": stamp.family or "",
+                "bird_group": stamp.bird_group or "",
+                "genus": stamp.genus or (parts[0] if len(parts) >= 1 else ""),
+                "species": stamp.species or (parts[1] if len(parts) >= 2 else "")
+            }
+
+        # Check taxonomy_reference table
+        ref = db.query(models.TaxonomyReference).filter(
+            func.lower(models.TaxonomyReference.scientific_name) == clean_sci.lower(),
+            or_(models.TaxonomyReference.order != "", models.TaxonomyReference.family != "")
+        ).order_by(models.TaxonomyReference.id.desc()).first()
+        if ref and (ref.order or ref.family):
+            parts = (ref.scientific_name or clean_sci).split()
+            return {
+                "english_name": ref.english_name or clean_eng,
+                "scientific_name": ref.scientific_name or clean_sci,
                 "order": ref.order or "",
                 "family": ref.family or "",
                 "bird_group": ref.bird_group or "",
-                "genus": ref.genus or "",
-                "species": ref.species or ""
+                "genus": ref.genus or (parts[0] if len(parts) >= 1 else ""),
+                "species": ref.species or (parts[1] if len(parts) >= 2 else "")
             }
 
-        # Try binomial match (first two words)
+        # Try binomial match (first two words) if user typed trinomial / subspecies
         parts = clean_sci.split()
         if len(parts) >= 2:
             binomial = f"{parts[0]} {parts[1]}".lower()
-            ref = db.query(models.TaxonomyReference).filter(
-                func.lower(models.TaxonomyReference.scientific_name) == binomial
-            ).first()
-            if ref and (ref.order or ref.family):
+            stamp_bi = db.query(models.Stamp).filter(
+                func.lower(models.Stamp.scientific_name) == binomial,
+                models.Stamp.english_name != "",
+                models.Stamp.english_name.isnot(None),
+                or_(models.Stamp.order != "", models.Stamp.family != "")
+            ).order_by(models.Stamp.my_collection.desc(), models.Stamp.id.asc()).first()
+            if stamp_bi and (stamp_bi.order or stamp_bi.family):
                 return {
-                    "order": ref.order or "",
-                    "family": ref.family or "",
-                    "bird_group": ref.bird_group or "",
-                    "genus": ref.genus or parts[0],
-                    "species": ref.species or parts[1]
+                    "english_name": stamp_bi.english_name or clean_eng,
+                    "scientific_name": stamp_bi.scientific_name or clean_sci,
+                    "order": stamp_bi.order or "",
+                    "family": stamp_bi.family or "",
+                    "bird_group": stamp_bi.bird_group or "",
+                    "genus": stamp_bi.genus or parts[0],
+                    "species": stamp_bi.species or parts[1]
                 }
 
-    # 2. Match by English common name in taxonomy_reference
+            ref_bi = db.query(models.TaxonomyReference).filter(
+                func.lower(models.TaxonomyReference.scientific_name) == binomial,
+                or_(models.TaxonomyReference.order != "", models.TaxonomyReference.family != "")
+            ).order_by(models.TaxonomyReference.id.desc()).first()
+            if ref_bi and (ref_bi.order or ref_bi.family):
+                return {
+                    "english_name": ref_bi.english_name or clean_eng,
+                    "scientific_name": ref_bi.scientific_name or clean_sci,
+                    "order": ref_bi.order or "",
+                    "family": ref_bi.family or "",
+                    "bird_group": ref_bi.bird_group or "",
+                    "genus": ref_bi.genus or parts[0],
+                    "species": ref_bi.species or parts[1]
+                }
+
+    # Priority 2: When english_name is provided, resolve Scientific Name and taxonomy
     if clean_eng:
-        ref = db.query(models.TaxonomyReference).filter(
-            func.lower(models.TaxonomyReference.english_name) == clean_eng.lower()
-        ).first()
-        if ref and (ref.order or ref.family):
+        # Check stamps catalog first
+        stamp = db.query(models.Stamp).filter(
+            func.lower(models.Stamp.english_name) == clean_eng.lower(),
+            models.Stamp.scientific_name != "",
+            models.Stamp.scientific_name.isnot(None),
+            or_(models.Stamp.order != "", models.Stamp.family != "")
+        ).order_by(models.Stamp.my_collection.desc(), models.Stamp.id.asc()).first()
+        if stamp and (stamp.order or stamp.family):
+            parts = (stamp.scientific_name or "").split()
             return {
+                "english_name": stamp.english_name or clean_eng,
+                "scientific_name": stamp.scientific_name or clean_sci,
+                "order": stamp.order or "",
+                "family": stamp.family or "",
+                "bird_group": stamp.bird_group or "",
+                "genus": stamp.genus or (parts[0] if len(parts) >= 1 else ""),
+                "species": stamp.species or (parts[1] if len(parts) >= 2 else "")
+            }
+
+        # Check taxonomy_reference table
+        ref = db.query(models.TaxonomyReference).filter(
+            func.lower(models.TaxonomyReference.english_name) == clean_eng.lower(),
+            or_(models.TaxonomyReference.order != "", models.TaxonomyReference.family != "")
+        ).order_by(models.TaxonomyReference.id.desc()).first()
+        if ref and (ref.order or ref.family):
+            parts = (ref.scientific_name or "").split()
+            return {
+                "english_name": ref.english_name or clean_eng,
+                "scientific_name": ref.scientific_name or clean_sci,
                 "order": ref.order or "",
                 "family": ref.family or "",
                 "bird_group": ref.bird_group or "",
-                "genus": ref.genus or "",
-                "species": ref.species or ""
-            }
-
-    # 3. Fallback: Search stamps table for existing specimen with matching name
-    if clean_sci:
-        stamp = db.query(models.Stamp).filter(
-            func.lower(models.Stamp.scientific_name) == clean_sci.lower(),
-            or_(models.Stamp.order != "", models.Stamp.family != "")
-        ).first()
-        if stamp and (stamp.order or stamp.family):
-            return {
-                "order": stamp.order or "",
-                "family": stamp.family or "",
-                "bird_group": stamp.bird_group or "",
-                "genus": stamp.genus or "",
-                "species": stamp.species or ""
-            }
-
-    if clean_eng:
-        stamp = db.query(models.Stamp).filter(
-            func.lower(models.Stamp.english_name) == clean_eng.lower(),
-            or_(models.Stamp.order != "", models.Stamp.family != "")
-        ).first()
-        if stamp and (stamp.order or stamp.family):
-            return {
-                "order": stamp.order or "",
-                "family": stamp.family or "",
-                "bird_group": stamp.bird_group or "",
-                "genus": stamp.genus or "",
-                "species": stamp.species or ""
+                "genus": ref.genus or (parts[0] if len(parts) >= 1 else ""),
+                "species": ref.species or (parts[1] if len(parts) >= 2 else "")
             }
 
     return None

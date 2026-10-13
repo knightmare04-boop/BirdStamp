@@ -190,6 +190,8 @@ def get_taxonomy_lookup(
     if result:
         return {
             "found": True,
+            "english_name": result.get("english_name", ""),
+            "scientific_name": result.get("scientific_name", ""),
             "order": result.get("order", ""),
             "family": result.get("family", ""),
             "bird_group": result.get("bird_group", ""),

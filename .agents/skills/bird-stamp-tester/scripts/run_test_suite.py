@@ -337,15 +337,27 @@ def run_all_tests():
                 else:
                     tracker.add_result("CRUD", f"POST /api/stamps/{test_stamp_id}/duplicate", "FAIL", f"Status {dup_res.status_code}")
 
-                # Test Taxonomy Autofill Lookup and Manual Addition
+                # Test Taxonomy Autofill Lookup (Two-Way) and Manual Addition
                 try:
-                    # 1. Existing bird lookup
+                    # 1. Existing bird lookup by English name -> resolves scientific name & taxonomy
                     res_look_found = requests.get(f"{base_url}/api/taxonomy/lookup?english_name=Common+Ostrich")
                     if res_look_found.status_code == 200 and res_look_found.json().get("found"):
                         t_data = res_look_found.json()
-                        tracker.add_result("Taxonomy", "GET /api/taxonomy/lookup (Found)", "PASS", f"Found Common Ostrich -> Order: {t_data.get('order')}, Family: {t_data.get('family')}")
+                        sci_resolved = t_data.get('scientific_name')
+                        tracker.add_result("Taxonomy", "GET /api/taxonomy/lookup (Common -> Sci & Tax)", "PASS", 
+                                           f"Common Ostrich -> Sci: {sci_resolved}, Order: {t_data.get('order')}, Family: {t_data.get('family')}")
                     else:
-                        tracker.add_result("Taxonomy", "GET /api/taxonomy/lookup (Found)", "FAIL", f"Failed to lookup Common Ostrich: {res_look_found.text}")
+                        tracker.add_result("Taxonomy", "GET /api/taxonomy/lookup (Common -> Sci & Tax)", "FAIL", f"Failed: {res_look_found.text}")
+
+                    # 1b. Two-way lookup by Scientific name -> resolves Common Name & taxonomy
+                    res_look_sci = requests.get(f"{base_url}/api/taxonomy/lookup?scientific_name=Passer+domesticus")
+                    if res_look_sci.status_code == 200 and res_look_sci.json().get("found"):
+                        t_data_sci = res_look_sci.json()
+                        eng_resolved = t_data_sci.get('english_name')
+                        tracker.add_result("Taxonomy", "GET /api/taxonomy/lookup (Sci -> Common & Tax)", "PASS", 
+                                           f"Passer domesticus -> Common: {eng_resolved}, Order: {t_data_sci.get('order')}, Family: {t_data_sci.get('family')}")
+                    else:
+                        tracker.add_result("Taxonomy", "GET /api/taxonomy/lookup (Sci -> Common & Tax)", "FAIL", f"Failed: {res_look_sci.text}")
 
                     # 2. Non-existent bird lookup -> must return exact requested error message
                     res_look_missing = requests.get(f"{base_url}/api/taxonomy/lookup?english_name=NonExistentBirdXYZ99")

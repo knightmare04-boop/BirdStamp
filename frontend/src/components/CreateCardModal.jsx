@@ -65,8 +65,8 @@ export default function CreateCardModal({
     };
   }, [imagePreview]);
 
-  // Taxonomy lookup from backend database
-  const triggerTaxonomyAutofill = async (eng, sci) => {
+  // Taxonomy lookup from backend database (two-way autofill)
+  const triggerTaxonomyAutofill = async (eng, sci, sourceField = null) => {
     const cleanEng = (eng || '').trim();
     const cleanSci = (sci || '').trim();
     if (!cleanEng && !cleanSci) {
@@ -76,14 +76,40 @@ export default function CreateCardModal({
 
     setIsTaxonomyLoading(true);
     try {
-      const res = await axios.get(`${API_BASE}/taxonomy/lookup`, {
-        params: {
-          english_name: cleanEng,
-          scientific_name: cleanSci
-        }
-      });
+      const params = {};
+      if (sourceField === 'scientific') {
+        params.scientific_name = cleanSci;
+      } else if (sourceField === 'english') {
+        params.english_name = cleanEng;
+      } else {
+        if (cleanSci) params.scientific_name = cleanSci;
+        if (cleanEng) params.english_name = cleanEng;
+      }
+
+      const res = await axios.get(`${API_BASE}/taxonomy/lookup`, { params });
 
       if (res.data && res.data.found) {
+        // Two-way autofill:
+        // 1. If user typed/selected Scientific Name -> autofill Common Name
+        if (sourceField === 'scientific' && res.data.english_name) {
+          setEnglishName(res.data.english_name);
+        } else if (!cleanEng && res.data.english_name) {
+          setEnglishName(res.data.english_name);
+        }
+
+        // 2. If user typed/selected English Common Name -> autofill Scientific Name
+        if (sourceField === 'english' && res.data.scientific_name) {
+          setScientificName(res.data.scientific_name);
+          const parts = res.data.scientific_name.trim().split(/\s+/);
+          if (parts.length >= 1 && parts[0] && !genus) setGenus(parts[0]);
+          if (parts.length >= 2 && parts[1] && !species) setSpecies(parts[1]);
+        } else if (!cleanSci && res.data.scientific_name) {
+          setScientificName(res.data.scientific_name);
+          const parts = res.data.scientific_name.trim().split(/\s+/);
+          if (parts.length >= 1 && parts[0] && !genus) setGenus(parts[0]);
+          if (parts.length >= 2 && parts[1] && !species) setSpecies(parts[1]);
+        }
+
         if (res.data.order) setOrder(res.data.order);
         if (res.data.family) setFamily(res.data.family);
         if (res.data.bird_group && !birdGroup) setBirdGroup(res.data.bird_group);
@@ -101,16 +127,16 @@ export default function CreateCardModal({
     }
   };
 
-  const scheduleAutofill = (eng, sci) => {
+  const scheduleAutofill = (eng, sci, sourceField = null) => {
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     debounceTimerRef.current = setTimeout(() => {
-      triggerTaxonomyAutofill(eng, sci);
+      triggerTaxonomyAutofill(eng, sci, sourceField);
     }, 550);
   };
 
   const handleEnglishNameChange = (val) => {
     setEnglishName(val);
-    scheduleAutofill(val, scientificName);
+    scheduleAutofill(val, scientificName, 'english');
   };
 
   const handleScientificNameChange = (val) => {
@@ -122,7 +148,7 @@ export default function CreateCardModal({
     if (parts.length >= 2 && parts[1] && !species) {
       setSpecies(parts[1]);
     }
-    scheduleAutofill(englishName, val);
+    scheduleAutofill(englishName, val, 'scientific');
   };
 
   // Save filled taxonomy into user's local database
@@ -455,7 +481,7 @@ export default function CreateCardModal({
                       placeholder="e.g. Bald Eagle, Barn Owl..." 
                       value={englishName}
                       onChange={e => handleEnglishNameChange(e.target.value)}
-                      onBlur={() => triggerTaxonomyAutofill(englishName, scientificName)}
+                      onBlur={() => triggerTaxonomyAutofill(englishName, scientificName, 'english')}
                       required
                     />
                   </div>
@@ -467,7 +493,7 @@ export default function CreateCardModal({
                       placeholder="e.g. Haliaeetus leucocephalus" 
                       value={scientificName}
                       onChange={e => handleScientificNameChange(e.target.value)}
-                      onBlur={() => triggerTaxonomyAutofill(englishName, scientificName)}
+                      onBlur={() => triggerTaxonomyAutofill(englishName, scientificName, 'scientific')}
                     />
                   </div>
                 </div>
