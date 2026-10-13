@@ -377,6 +377,9 @@ def ensure_taxonomy_populated():
     if not os.path.exists(db_path):
         return
 
+    # Ensure schema and auto-repair any corruption before querying
+    ensure_db_schema()
+
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
@@ -398,7 +401,20 @@ def ensure_taxonomy_populated():
             logger.info("Taxonomy data incomplete (ref_count=%d, stamps_with_order=%d). Initiating population...", count, stamps_with_order)
             populate_taxonomy_database()
     except Exception as e:
-        logger.exception("Error checking taxonomy population: %s", e)
+        logger.exception("Error checking taxonomy population: %s. Attempting schema repair and retry...", e)
+        try:
+            ensure_db_schema()
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT count(*) FROM taxonomy_reference;")
+            count = cursor.fetchone()[0]
+            cursor.execute('SELECT count(*) FROM stamps WHERE "order" IS NOT NULL AND "order" != \'\';')
+            stamps_with_order = cursor.fetchone()[0]
+            conn.close()
+            if count == 0 or stamps_with_order == 0:
+                populate_taxonomy_database()
+        except Exception as retry_err:
+            logger.exception("Taxonomy population retry after repair also failed: %s", retry_err)
 
 def lookup_taxonomy(db: Session, english_name: Optional[str] = None, scientific_name: Optional[str] = None) -> Optional[Dict[str, str]]:
     """

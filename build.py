@@ -320,6 +320,25 @@ def build(release=False, notes=None, notes_file=None):
             sys.exit(1)
         shutil.copy2(original_db, prepop_dir)
         print("Copied updated bird_stamps.db to Prepopulated distribution.")
+        prepop_db = os.path.join(prepop_dir, "bird_stamps.db")
+        print("Verifying Prepopulated bird_stamps.db integrity & taxonomy...")
+        try:
+            chk_conn = sqlite3.connect(prepop_db)
+            integrity = chk_conn.execute("PRAGMA integrity_check;").fetchall()
+            if integrity != [('ok',)]:
+                print(f"FATAL: Database in prepopulated dir failed integrity check: {integrity}")
+                sys.exit(1)
+            total_stamps = chk_conn.execute("SELECT COUNT(*) FROM stamps;").fetchone()[0]
+            with_order = chk_conn.execute('SELECT COUNT(*) FROM stamps WHERE [order] IS NOT NULL AND length([order]) > 0;').fetchone()[0]
+            with_family = chk_conn.execute('SELECT COUNT(*) FROM stamps WHERE [family] IS NOT NULL AND length([family]) > 0;').fetchone()[0]
+            chk_conn.close()
+            print(f"Verified Prepopulated DB: {total_stamps} total stamps, {with_order} with Order, {with_family} with Family.")
+            if total_stamps < 50000 or with_order < 50000 or with_family < 50000:
+                print("FATAL: Prepopulated database has insufficient stamps or missing taxonomy!")
+                sys.exit(1)
+        except Exception as e:
+            print(f"FATAL: Error validating prepopulated database: {e}")
+            sys.exit(1)
     else:
         print("WARNING: bird_stamps.db not found in backend folder. Prepopulated will be empty.")
 

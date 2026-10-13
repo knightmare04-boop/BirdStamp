@@ -6,6 +6,7 @@ import os
 import shutil
 import sqlite3
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -102,11 +103,117 @@ def get_db():
     finally:
         db.close()
 
+def repair_database_if_corrupted(db_file: str):
+    """Automatically detect and repair database corruption (e.g. from abnormal terminations)."""
+    if not os.path.exists(db_file):
+        return
+    try:
+        conn = sqlite3.connect(db_file, timeout=5)
+        cur = conn.cursor()
+        cur.execute("PRAGMA integrity_check(1);")
+        res = cur.fetchone()
+        if res and res[0] == "ok":
+            conn.close()
+            return
+        
+        logger.warning("Database integrity check failed: %s. Attempting auto-repair...", res)
+        # Attempt 1: Checkpoint WAL and REINDEX
+        try:
+            cur.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            cur.execute("REINDEX;")
+            conn.commit()
+            cur.execute("PRAGMA integrity_check(1);")
+            res2 = cur.fetchone()
+            if res2 and res2[0] == "ok":
+                conn.close()
+                logger.info("Database successfully repaired via REINDEX.")
+                return
+        except Exception:
+            pass
+        conn.close()
+
+        # Attempt 2: Auto-salvage valid records into clean database
+        logger.warning("REINDEX did not resolve corruption. Rebuilding database via salvage dump...")
+        bak_file = db_file + f".corrupt_{int(time.time())}.bak"
+        try:
+            shutil.copy2(db_file, bak_file)
+        except Exception:
+            pass
+
+        repaired_tmp = db_file + ".repaired.tmp"
+        if os.path.exists(repaired_tmp):
+            try: os.remove(repaired_tmp)
+            except Exception: pass
+
+        src_conn = sqlite3.connect(db_file)
+        dst_conn = sqlite3.connect(repaired_tmp)
+        dump_success = False
+        try:
+            for line in src_conn.iterdump():
+                try:
+                    dst_conn.execute(line)
+                except Exception:
+                    pass
+            dst_conn.commit()
+            dump_success = True
+        except Exception as dump_err:
+            logger.warning("iterdump encountered error: %s. Attempting table-level salvage...", dump_err)
+
+        if not dump_success:
+            try:
+                cur_src = src_conn.cursor()
+                cur_dst = dst_conn.cursor()
+                tables = [r[0] for r in cur_src.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';").fetchall()]
+                for tbl in tables:
+                    sql_row = cur_src.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?;", (tbl,)).fetchone()
+                    if sql_row and sql_row[0]:
+                        try:
+                            cur_dst.execute(sql_row[0])
+                        except Exception:
+                            pass
+                    try:
+                        rows = cur_src.execute(f'SELECT * FROM "{tbl}"').fetchall()
+                        if rows:
+                            qmarks = ",".join(["?"] * len(rows[0]))
+                            cur_dst.executemany(f'INSERT OR IGNORE INTO "{tbl}" VALUES ({qmarks})', rows)
+                    except Exception as tbl_err:
+                        logger.warning("Could not salvage rows from table %s: %s", tbl, tbl_err)
+                dst_conn.commit()
+            except Exception as salvage_err:
+                logger.exception("Table-level salvage failed: %s", salvage_err)
+
+        dst_conn.close()
+        src_conn.close()
+
+        for ext in ["-wal", "-shm", "-journal"]:
+            f = db_file + ext
+            if os.path.exists(f):
+                try: os.remove(f)
+                except Exception: pass
+
+        if os.path.exists(repaired_tmp) and os.path.getsize(repaired_tmp) > 1024:
+            # Verify repaired database has stamps before replacing
+            try:
+                check_conn = sqlite3.connect(repaired_tmp)
+                stamps_count = check_conn.execute("SELECT count(*) FROM stamps;").fetchone()[0]
+                check_conn.close()
+                if stamps_count > 0:
+                    shutil.move(repaired_tmp, db_file)
+                    logger.info("Database successfully salvaged (%d stamps preserved) and replaced.", stamps_count)
+                else:
+                    logger.warning("Salvaged database contained 0 stamps; leaving original in place.")
+            except Exception as ver_err:
+                logger.warning("Verification of repaired database failed: %s", ver_err)
+    except Exception as e:
+        logger.exception("Failed during database repair: %s", e)
+
 def ensure_db_schema():
     """Ensure all required columns exist in the SQLite database."""
     if not os.path.exists(db_path):
         return
     
+    repair_database_if_corrupted(db_path)
+
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     try:
