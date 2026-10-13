@@ -13,6 +13,28 @@ from database import get_database_path, ensure_db_schema
 logger = logging.getLogger(__name__)
 
 EXCEL_FILENAME = "My Collection_Final List_1.1.xlsx"
+SEED_DB_FILENAME = "taxonomy_reference.db"
+
+def get_seed_db_path() -> Optional[str]:
+    """Find pre-compiled taxonomy_reference.db in development or packaged environments."""
+    if getattr(sys, 'frozen', False):
+        exe_dir = os.path.dirname(sys.executable)
+        candidates = [
+            os.path.join(exe_dir, "data", "collections", SEED_DB_FILENAME),
+            os.path.join(exe_dir, SEED_DB_FILENAME),
+            os.path.join(getattr(sys, '_MEIPASS', ''), "data", "collections", SEED_DB_FILENAME),
+            os.path.join(getattr(sys, '_MEIPASS', ''), SEED_DB_FILENAME),
+        ]
+    else:
+        project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        candidates = [
+            os.path.join(project_dir, "data", "collections", SEED_DB_FILENAME),
+            os.path.join(project_dir, "backend", SEED_DB_FILENAME),
+        ]
+    for p in candidates:
+        if p and os.path.isfile(p):
+            return p
+    return None
 
 def get_excel_path() -> Optional[str]:
     """Find My Collection_Final List_1.1.xlsx in development or packaged environments."""
@@ -41,22 +63,116 @@ def clean_val(val: Any) -> str:
     s = str(val).strip()
     return "" if s.lower() == "nan" else s
 
+def populate_taxonomy_from_seed(seed_path: str, db_path: str) -> bool:
+    """Instant population of taxonomy_reference from pre-compiled seed database (< 0.05s)."""
+    if not os.path.exists(seed_path):
+        return False
+    try:
+        ensure_db_schema()
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM taxonomy_reference;")
+        cursor.execute(f"ATTACH DATABASE '{seed_path}' AS seed_db;")
+        cursor.execute("""
+            INSERT INTO taxonomy_reference (
+                english_name, scientific_name, "order", family, bird_group, genus, species
+            )
+            SELECT english_name, scientific_name, "order", family, bird_group, genus, species
+            FROM seed_db.taxonomy_reference;
+        """)
+        conn.commit()
+        cursor.execute("DETACH DATABASE seed_db;")
+        cursor.execute("SELECT count(*) FROM taxonomy_reference;")
+        count = cursor.fetchone()[0]
+        conn.close()
+        logger.info("Fast seed population loaded %d taxonomy reference records from %s.", count, seed_path)
+        return count > 0
+    except Exception as e:
+        logger.exception("Error during fast seed population: %s", e)
+        return False
+
+def fast_backfill_stamps(db_path: str) -> int:
+    """Rapidly backfills order and family into stamps table using in-memory dictionary lookup."""
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    try:
+        cursor.execute('SELECT english_name, scientific_name, "order", family FROM taxonomy_reference WHERE "order" != "" OR family != "";')
+        rows = cursor.fetchall()
+        sci_map = {}
+        eng_map = {}
+        for eng, sci, o, f in rows:
+            if sci:
+                sci_map[sci.lower().strip()] = (o, f)
+            if eng:
+                eng_map[eng.lower().strip()] = (o, f)
+
+        cursor.execute('SELECT id, english_name, scientific_name, "order", family FROM stamps WHERE "order" IS NULL OR "order" = "" OR family IS NULL OR family = "";')
+        stamps_to_check = cursor.fetchall()
+
+        updates = []
+        for sid, eng, sci, cur_o, cur_f in stamps_to_check:
+            sci_l = clean_val(sci).lower()
+            eng_l = clean_val(eng).lower()
+            hit = None
+            if sci_l and sci_l in sci_map:
+                hit = sci_map[sci_l]
+            elif eng_l and eng_l in eng_map:
+                hit = eng_map[eng_l]
+            elif sci_l:
+                parts = sci_l.split()
+                if len(parts) >= 2:
+                    two_words = f"{parts[0]} {parts[1]}"
+                    if two_words in sci_map:
+                        hit = sci_map[two_words]
+
+            if hit:
+                new_o = cur_o or hit[0]
+                new_f = cur_f or hit[1]
+                if new_o != cur_o or new_f != cur_f:
+                    updates.append((new_o, new_f, sid))
+
+        if updates:
+            logger.info("Fast-backfilling order and family for %d stamps...", len(updates))
+            cursor.executemany('UPDATE stamps SET "order" = ?, family = ? WHERE id = ?;', updates)
+            conn.commit()
+            logger.info("Successfully fast-backfilled %d stamps with order & family.", len(updates))
+        return len(updates)
+    except Exception as e:
+        logger.exception("Error during fast backfill: %s", e)
+        conn.rollback()
+        return 0
+    finally:
+        conn.close()
+
 def populate_taxonomy_database(excel_path: Optional[str] = None):
     """
-    Parses IOC 14.1 and Final sheets from My Collection_Final List_1.1.xlsx,
-    populates the taxonomy_reference table in SQLite, and backfills order and family
-    for all existing stamps in bird_stamps.db.
+    Populates taxonomy_reference table and backfills stamps with order and family.
+    Uses pre-built seed database if available (< 0.1s); falls back to Excel parsing.
     """
+    ensure_db_schema()
+    db_path = get_database_path()
+
+    # 1. Fast Path: Pre-built SQLite seed database
+    seed_path = get_seed_db_path()
+    if seed_path and os.path.exists(seed_path):
+        logger.info("Found pre-compiled taxonomy seed database at %s. Fast-loading...", seed_path)
+        if populate_taxonomy_from_seed(seed_path, db_path):
+            updated = fast_backfill_stamps(db_path)
+            return {
+                "status": "success",
+                "source": "seed_db",
+                "stamps_updated": updated
+            }
+
+    # 2. Fallback Path: Parse Excel file
     if not excel_path:
         excel_path = get_excel_path()
 
     if not excel_path or not os.path.exists(excel_path):
-        logger.warning("Taxonomy workbook not found at %s. Skipping taxonomy population.", excel_path)
-        return {"status": "skipped", "message": "Excel file not found"}
+        logger.warning("Neither seed DB nor taxonomy workbook found. Skipping taxonomy population.")
+        return {"status": "skipped", "message": "No seed DB or Excel file found"}
 
-    logger.info("Populating taxonomy database from %s...", excel_path)
-    ensure_db_schema()
-    db_path = get_database_path()
+    logger.info("Populating taxonomy database from Excel %s...", excel_path)
 
     # Dictionary to hold unified taxonomy records keyed by lowercase identifier
     # key: normalized name -> dict

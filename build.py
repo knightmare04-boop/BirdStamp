@@ -190,6 +190,14 @@ def build(release=False, notes=None, notes_file=None):
     if os.path.exists(collection_xlsx):
         add_data_args.append(f"--add-data={collection_xlsx};data/collections")
 
+    seed_db_candidates = [
+        os.path.join(root_dir, "data", "collections", "taxonomy_reference.db"),
+        os.path.join(backend_dir, "taxonomy_reference.db"),
+    ]
+    seed_db = next((p for p in seed_db_candidates if os.path.exists(p)), seed_db_candidates[0])
+    if os.path.exists(seed_db):
+        add_data_args.append(f"--add-data={seed_db};data/collections")
+
     runtime_hook = os.path.join(backend_dir, "rthook_unblock.py")
 
     pyinstaller_cmd = [
@@ -288,6 +296,10 @@ def build(release=False, notes=None, notes_file=None):
         data_coll_dir = os.path.join(build_output_dir, "data", "collections")
         os.makedirs(data_coll_dir, exist_ok=True)
         shutil.copy2(collection_xlsx, data_coll_dir)
+    if os.path.exists(seed_db):
+        data_coll_dir = os.path.join(build_output_dir, "data", "collections")
+        os.makedirs(data_coll_dir, exist_ok=True)
+        shutil.copy2(seed_db, data_coll_dir)
     _write_readme(build_output_dir)
 
     print("Copying to Fresh distribution...")

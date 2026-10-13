@@ -12,6 +12,7 @@ import time
 import base64
 import binascii
 import logging
+import threading
 
 import models
 import schemas
@@ -29,7 +30,8 @@ logger = logging.getLogger(__name__)
 # Run auto-migration on startup
 ensure_db_schema()
 models.Base.metadata.create_all(bind=engine)
-taxonomy_service.ensure_taxonomy_populated()
+# Populate taxonomy reference in background so uvicorn binds and responds to /api/status instantly
+threading.Thread(target=taxonomy_service.ensure_taxonomy_populated, daemon=True, name="taxonomy-population").start()
 
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB
 

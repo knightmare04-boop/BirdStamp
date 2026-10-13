@@ -112,7 +112,7 @@ def _start_server(port, host="127.0.0.1"):
     server.run()
 
 
-def _wait_for_server(port, host="127.0.0.1", timeout=20.0):
+def _wait_for_server(port, host="127.0.0.1", timeout=60.0):
     import urllib.request
     import urllib.error
 

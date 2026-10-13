@@ -625,6 +625,9 @@ def run_apply(argv):
             src = os.path.join(new_dir, name)
             if os.path.isfile(src):
                 _retry(lambda s=src, d=os.path.join(app_dir, name): shutil.copy2(s, d))
+        new_data = os.path.join(new_dir, "data")
+        if os.path.isdir(new_data):
+            _retry(lambda s=new_data, d=os.path.join(app_dir, "data"): shutil.copytree(s, d, dirs_exist_ok=True))
     except Exception:
         logger.exception("[apply] Installing %s failed; restoring previous version", version)
         restore()

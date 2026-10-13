@@ -382,7 +382,6 @@ def run_all_tests():
                 finally:
                     # Clean up test taxonomy entry
                     try:
-                        import sqlite3
                         with sqlite3.connect(db_file) as conn:
                             conn.execute("DELETE FROM taxonomy_reference WHERE english_name = 'Mystic Phoenix Bird'")
                             conn.commit()
@@ -440,11 +439,10 @@ def run_all_tests():
                                 # Clean up uploaded image file
                                 try:
                                     img_filename = os.path.basename(uploaded_url)
-                                    img_path = os.path.join(root_dir, "backend", "uploads", img_filename)
+                                    img_path = os.path.join(WORKSPACE_DIR, "backend", "uploads", img_filename)
                                     if os.path.exists(img_path):
                                         os.remove(img_path)
                                     # Also clean up test taxonomy entry created for Aptenodytes forsteri
-                                    import sqlite3
                                     with sqlite3.connect(db_file) as conn:
                                         conn.execute("DELETE FROM taxonomy_reference WHERE english_name = 'Test Emperor Penguin'")
                                         conn.commit()
